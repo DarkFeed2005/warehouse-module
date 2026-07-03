@@ -1,0 +1,24 @@
+# Ignore the specific project directory causing the bloat
+my_project_output/
+
+# General ignores for web projects (Node/Bun)
+node_modules/
+dist/
+.output/
+.nuxt/
+.next/
+.cache/
+
+# Ignore environment files
+.env
+.env.*
+!.env.example
+
+# Ignore OS and IDE metadata
+.DS_Store
+.vscode/
+.idea/
+
+# Ignore lock files if they are the source of massive changes
+bun.lock
+bun.lockb
