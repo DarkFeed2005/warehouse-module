@@ -1,0 +1,143 @@
+version: "3.9"
+
+# ════════════════════════════════════════════════════════════
+# SMART PMB — Production Stack
+# ════════════════════════════════════════════════════════════
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml logs -f
+# ════════════════════════════════════════════════════════════
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ─── PostgreSQL 16 ───────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: smart_pmb
+      POSTGRES_USER: smart_pmb
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smart_pmb -d smart_pmb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+    networks:
+      - smartpmb
+
+  # ─── Redis 7 ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-redis-secret}"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "__health__"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    networks:
+      - smartpmb
+
+  # ─── Django Backend (Gunicorn) ──────────────────────────
+  backend:
+    build:
+      context: ./deliverables/backend
+      dockerfile: Dockerfile
+    image: ghcr.io/${GITHUB_REPOSITORY:-smart-pmb}/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY is required}
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: ${DOMAIN:-localhost},backend
+      DATABASE_URL: postgres://smart_pmb:${DB_PASSWORD:-change-me}@db:5432/smart_pmb
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis-secret}@redis:6379/0
+      CORS_ALLOWED_ORIGINS: https://${DOMAIN:-localhost}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
+      GUNICORN_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging: *default-logging
+    networks:
+      - smartpmb
+
+  # ─── Next.js Frontend ───────────────────────────────────
+  frontend:
+    build:
+      context: ./deliverables/frontend
+      dockerfile: Dockerfile
+    image: ghcr.io/${GITHUB_REPOSITORY:-smart-pmb}/frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://${DOMAIN:-localhost}/api
+      HOSTNAME: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode===200?0:1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    networks:
+      - smartpmb
+
+  # ─── Nginx Reverse Proxy ────────────────────────────────
+  nginx:
+    build:
+      context: ./docker/nginx
+      dockerfile: Dockerfile
+    image: ghcr.io/${GITHUB_REPOSITORY:-smart-pmb}/nginx:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    volumes:
+      # Mount TLS certificates (Let's Encrypt / self-signed for dev)
+      - ./docker/nginx/certs:/etc/ssl/certs:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+    networks:
+      - smartpmb
+
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+
+networks:
+  smartpmb:
+    driver: bridge

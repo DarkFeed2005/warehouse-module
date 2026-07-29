@@ -5,21 +5,23 @@ import SectionHeader from '@/components/SectionHeader';
 import StatusBadge from '@/components/StatusBadge';
 import Modal, { Button } from '@/components/Modal';
 import { DataTable, TR, TD } from '@/components/DataTable';
-import { warehouses, inventoryByWarehouse } from '@/lib/data';
 import { fmtKg } from '@/lib/format';
+import { useWarehouseDetail, useWarehouseInventory } from '@/lib/hooks';
 
-export default function WarehouseDetail() {
-  const { id } = useParams<{ id:string }>();
-  const w = warehouses.find(x => String(x.warehouse_id) === id);
+export default function WarehouseDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const numId = Number(id);
+  const { data: w, isLoading } = useWarehouseDetail(numId);
+  const { data: inv = [] } = useWarehouseInventory(numId);
   const [modal, setModal] = useState<null | 'add' | 'remove'>(null);
+
+  if (isLoading) return <div className="text-center text-forest-800/50 text-sm py-8">Loading...</div>;
   if (!w) return notFound();
 
-  const inv = inventoryByWarehouse[w.warehouse_id] ?? [];
-  const maxQty = Math.max(...inv.map(i=>i.quantity_kg), 1);
+  const maxQty = Math.max(...inv.map((i: any) => i.quantity_kg), 1);
 
   return (
     <div className="space-y-8 max-w-[1400px]">
-      {/* Info card */}
       <section className="rounded-2xl bg-gradient-to-br from-forest-600 to-forest-800 text-cream p-6 md:p-8 shadow-soft animate-fade-up relative overflow-hidden">
         <div className="absolute -top-16 -right-10 w-64 h-64 rounded-full bg-amberpmb/20 blur-3xl" />
         <div className="relative flex flex-wrap items-start justify-between gap-4">
@@ -35,7 +37,7 @@ export default function WarehouseDetail() {
             ['Capacity',       fmtKg(w.capacity_kg)],
             ['Current Stock',  fmtKg(w.current_stock_kg)],
             ['Utilization',    `${w.utilization_pct}%`],
-            ['Remaining',      fmtKg(w.capacity_kg - w.current_stock_kg)],
+            ['Remaining',      fmtKg(Number(w.capacity_kg) - Number(w.current_stock_kg))],
           ].map(([l,v],i) => (
             <div key={l} style={{animationDelay:`${i*80}ms`}} className="animate-fade-up">
               <div className="text-[11px] uppercase tracking-wider text-cream/50">{l}</div>
@@ -50,25 +52,28 @@ export default function WarehouseDetail() {
         </div>
       </section>
 
-      {/* Inventory + chart */}
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2">
           <SectionHeader label="Inventory Breakdown" />
-          <DataTable columns={['Paddy Type','Quantity','Storage Date']}>
-            {inv.map(row => (
-              <TR key={row.inventory_id}>
-                <TD className="font-semibold text-forest-700">{row.paddy_type}</TD>
-                <TD>{fmtKg(row.quantity_kg)}</TD>
-                <TD className="text-forest-800/60">{row.storage_date}</TD>
-              </TR>
-            ))}
-          </DataTable>
+          {inv.length === 0 ? (
+            <div className="rounded-2xl bg-white border border-forest-600/10 p-8 text-center text-sm text-forest-800/60 shadow-soft">No inventory records.</div>
+          ) : (
+            <DataTable columns={['Paddy Type','Quantity','Storage Date']}>
+              {inv.map((row: any) => (
+                <TR key={row.inventory_id}>
+                  <TD className="font-semibold text-forest-700">{row.paddy_type}</TD>
+                  <TD>{fmtKg(row.quantity_kg)}</TD>
+                  <TD className="text-forest-800/60">{row.storage_date}</TD>
+                </TR>
+              ))}
+            </DataTable>
+          )}
         </div>
 
         <div>
           <SectionHeader label="Stock by Paddy Type" />
           <div className="rounded-2xl bg-white border border-forest-600/10 p-5 shadow-soft animate-fade-up space-y-4">
-            {inv.map((row,i) => (
+            {inv.map((row: any,i: number) => (
               <div key={row.inventory_id} style={{animationDelay:`${i*80}ms`}} className="animate-fade-up">
                 <div className="flex items-center justify-between text-xs text-forest-800/70 mb-1.5">
                   <span className="font-medium">{row.paddy_type}</span>

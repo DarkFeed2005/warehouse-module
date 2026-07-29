@@ -1,18 +1,47 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
 
-# Other files and folders
-.settings/
+# Database
+db.sqlite3
+*.sqlite3
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+# Node / Frontend
+node_modules/
+.next/
+.nuxt/
+out/
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# Environment files (keep .example)
+.env
+!.env.example
+!.env.prod.example
+
+# Django
+staticfiles/
+media/
+*.pot
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
