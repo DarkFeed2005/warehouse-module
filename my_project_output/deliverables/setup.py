@@ -184,16 +184,19 @@ def migrate_and_seed():
 
 
 # ─── Step 3: frontend ───
-def create_frontend_env():
+def create_frontend_env(backend_port):
     env_file = FRONTEND / ".env.local"
+    expected = f"NEXT_PUBLIC_API_URL=http://localhost:{backend_port}/api"
     if env_file.exists():
-        say("  frontend/.env.local already exists — leaving it as is.", C_YELLOW)
+        txt = env_file.read_text(encoding="utf-8")
+        if expected in txt:
+            say("  frontend/.env.local already points at the right backend — leaving it as is.", C_YELLOW)
+            return
+        env_file.write_text(expected + "\n", encoding="utf-8")
+        say(f"  Updated frontend/.env.local to point at the backend on port {backend_port}.", C_YELLOW)
         return
-    example = FRONTEND / ".env.example"
-    if not example.exists():
-        die("frontend/.env.example is missing. Please re-copy the project folder.")
-    shutil.copyfile(example, env_file)
-    say("  Created frontend/.env.local (NEXT_PUBLIC_API_URL=http://localhost:8000/api).", C_GREEN)
+    env_file.write_text(expected + "\n", encoding="utf-8")
+    say(f"  Created frontend/.env.local (NEXT_PUBLIC_API_URL=http://localhost:{backend_port}/api).", C_GREEN)
 
 
 def install_frontend_deps():
@@ -210,22 +213,37 @@ def build_frontend():
 
 
 # ─── Step 4: run servers ───
-def pick_port(preferred):
+def pick_port(preferred, tries=20):
+    for port in range(preferred, preferred + tries):
+        ok = True
+        for family, addr in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::")):
+            s = socket.socket(family, socket.SOCK_STREAM)
+            try:
+                if family == socket.AF_INET6:
+                    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+                s.bind((addr, port))
+            except OSError:
+                ok = False
+            finally:
+                s.close()
+            if not ok:
+                break
+        if ok:
+            return port
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        s.bind(("127.0.0.1", preferred))
-        return preferred
-    except OSError:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
     finally:
         s.close()
 
 
-def wait_until_responding(url, timeout=90, what=""):
+def wait_until_responding(url, timeout=60, what="", proc=None):
     say(f"  Waiting for {what} at {url} ...", C_DIM)
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if proc is not None and proc.poll() is not None:
+            return False
         try:
             urllib.request.urlopen(url, timeout=2)
             return True
@@ -244,34 +262,50 @@ def pump_output(proc, name, color):
 def start_servers(backend_port, frontend_port):
     procs = []
 
-    backend_env = dict(os.environ, PYTHONUNBUFFERED="1")
-    be = subprocess.Popen(
-        [str(PYTHON), "manage.py", "runserver", f"127.0.0.1:{backend_port}"],
-        cwd=str(BACKEND), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace", bufsize=1, env=backend_env,
-    )
-    procs.append(be)
-    threading.Thread(target=pump_output, args=(be, "backend ", BE_COLOR), daemon=True).start()
+    def start_backend(port):
+        env = dict(os.environ, PYTHONUNBUFFERED="1")
+        p = subprocess.Popen(
+            [str(PYTHON), "manage.py", "runserver", "--noreload", f"127.0.0.1:{port}"],
+            cwd=str(BACKEND), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1, env=env,
+        )
+        procs.append(p)
+        threading.Thread(target=pump_output, args=(p, "backend ", BE_COLOR), daemon=True).start()
+        return p
 
-    fe = subprocess.Popen(
-        npm_cmd(["run", "start", "--", "-p", str(frontend_port)]),
-        cwd=str(FRONTEND), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace", bufsize=1,
-    )
-    procs.append(fe)
-    threading.Thread(target=pump_output, args=(fe, "frontend", FE_COLOR), daemon=True).start()
+    def start_frontend(port):
+        p = subprocess.Popen(
+            npm_cmd(["run", "start", "--", "-p", str(port)]),
+            cwd=str(FRONTEND), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+        )
+        procs.append(p)
+        threading.Thread(target=pump_output, args=(p, "frontend", FE_COLOR), daemon=True).start()
+        return p
 
-    backend_url = f"http://127.0.0.1:{backend_port}"
-    frontend_url = f"http://127.0.0.1:{frontend_port}"
-    say(f"  Backend  starting at {backend_url} ...", C_BOLD)
-    if not wait_until_responding(f"{backend_url}/api/auth/me/", what="backend"):
-        die("Backend did not respond in time. Check the logs above.")
-    say(f"  Backend  is up at {backend_url}", C_GREEN)
-    say(f"  Frontend starting at {frontend_url} ...", C_BOLD)
-    if not wait_until_responding(f"{frontend_url}/login", what="frontend"):
-        die("Frontend did not respond in time. Check the logs above.")
-    say(f"  Frontend is up at {frontend_url}", C_GREEN)
+    def launch(name, spawn, port, health_path):
+        url = f"http://127.0.0.1:{port}"
+        say(f"  Starting {name} at {url} ...", C_BOLD)
+        for attempt in range(6):
+            p = spawn(port)
+            ok = wait_until_responding(f"{url}{health_path}", what=name, proc=p)
+            if ok:
+                time.sleep(3)
+                if p.poll() is None:
+                    say(f"  {name.capitalize()} is up at {url}", C_GREEN)
+                    return url
+            try:
+                p.terminate()
+            except Exception:
+                pass
+            time.sleep(1)
+            port = pick_port(port + 1)
+            url = f"http://127.0.0.1:{port}"
+            say(f"  Port {port - 1} is busy or startup failed — retrying on port {port} ...", C_YELLOW)
+        die(f"{name.capitalize()} failed to start. Scroll up for its logs.")
 
+    backend_url = launch("backend", start_backend, backend_port, "/api/auth/me/")
+    frontend_url = launch("frontend", start_frontend, frontend_port, "/login")
     return procs, backend_url, frontend_url
 
 
@@ -315,8 +349,11 @@ def main():
     create_backend_env()
     migrate_and_seed()
 
+    backend_port = pick_port(8000)
+    frontend_port = pick_port(3000)
+
     step(3, "Setting up frontend")
-    create_frontend_env()
+    create_frontend_env(backend_port)
     install_frontend_deps()
     if not args.no_build:
         build_frontend()
@@ -330,8 +367,6 @@ def main():
         return
 
     step(4, "Starting servers")
-    backend_port = pick_port(8000)
-    frontend_port = pick_port(3000)
     procs, backend_url, frontend_url = start_servers(backend_port, frontend_port)
 
     show_summary(backend_url, frontend_url)
