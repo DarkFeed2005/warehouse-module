@@ -4,9 +4,10 @@ import { useParams, notFound } from 'next/navigation';
 import SectionHeader from '@/components/SectionHeader';
 import StatusBadge from '@/components/StatusBadge';
 import Modal, { Button } from '@/components/Modal';
+import DeliveryModal from '@/components/DeliveryModal';
 import { DataTable, TR, TD } from '@/components/DataTable';
 import { fmtKg } from '@/lib/format';
-import { useWarehouseDetail, useWarehouseInventory } from '@/lib/hooks';
+import { useWarehouseDetail, useWarehouseInventory, useCreatePurchase } from '@/lib/hooks';
 
 export default function WarehouseDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -92,34 +93,77 @@ export default function WarehouseDetailPage() {
         </div>
       </section>
 
-      <Modal open={modal==='add'} onClose={()=>setModal(null)} title="Add Stock">
-        <StockForm mode="add" warehouseId={w.warehouse_id} onDone={()=>setModal(null)} />
+      <Modal open={modal==='add'} onClose={()=>setModal(null)} title="Record Stock Intake">
+        <StockForm warehouseId={w.warehouse_id} onDone={()=>setModal(null)} />
       </Modal>
-      <Modal open={modal==='remove'} onClose={()=>setModal(null)} title="Remove Stock">
-        <StockForm mode="remove" warehouseId={w.warehouse_id} onDone={()=>setModal(null)} />
-      </Modal>
+      <DeliveryModal
+        open={modal==='remove'}
+        onClose={()=>setModal(null)}
+        warehouseId={w.warehouse_id}
+        warehouseName={w.name}
+        defaultQty={0}
+      />
     </div>
   );
 }
 
-function StockForm({ mode, warehouseId, onDone }:{
-  mode:'add'|'remove'; warehouseId:number; onDone:()=>void;
+function StockForm({ warehouseId, onDone }:{
+  warehouseId:number; onDone:()=>void;
 }) {
-  const [qty, setQty] = useState('');
+  const createPurchase = useCreatePurchase();
+  const [farmer, setFarmer] = useState('');
   const [type, setType] = useState('Nadu');
+  const [qty, setQty] = useState('');
+  const [amount, setAmount] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const qtyNum = Number(qty);
+    if (!farmer.trim()) return setError('Farmer name is required.');
+    if (!qtyNum || qtyNum <= 0) return setError('Quantity must be greater than 0.');
+    if (Number(amount) < 0) return setError('Amount must be a valid number.');
+    try {
+      await createPurchase.mutateAsync({
+        farmer_name: farmer.trim(),
+        warehouse_id: warehouseId,
+        paddy_type: type,
+        quantity_kg: qtyNum,
+        amount_lkr: Number(amount || 0),
+      });
+      onDone();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to record intake.');
+    }
+  }
+
   return (
-    <form onSubmit={(e)=>{e.preventDefault(); onDone();}} className="space-y-4">
+    <form onSubmit={submit} className="space-y-4">
+      <Field label="Farmer / Buyer">
+        <input value={farmer} onChange={e=>setFarmer(e.target.value)} className={inputCls} placeholder="e.g. Sunil Rathnayake" required/>
+      </Field>
       <Field label="Paddy Type">
         <select value={type} onChange={e=>setType(e.target.value)} className={inputCls}>
           {['Nadu','Samba','Keeri Samba','Red Raw'].map(o=><option key={o}>{o}</option>)}
         </select>
       </Field>
-      <Field label="Quantity (kg)">
-        <input value={qty} onChange={e=>setQty(e.target.value)} type="number" min="1" className={inputCls} required/>
-      </Field>
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Quantity (kg)">
+          <input value={qty} onChange={e=>setQty(e.target.value)} type="number" min="1" className={inputCls} required/>
+        </Field>
+        <Field label="Amount (LKR)">
+          <input value={amount} onChange={e=>setAmount(e.target.value)} type="number" min="0" className={inputCls}/>
+        </Field>
+      </div>
+      {error && (
+        <div className="rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-sm px-4 py-3 animate-pop">{error}</div>
+      )}
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="outline" onClick={onDone}>Cancel</Button>
-        <Button type="submit">{mode==='add'?'Add to warehouse':'Remove from warehouse'}</Button>
+        <Button type="submit" disabled={createPurchase.isPending}>
+          {createPurchase.isPending ? 'Recording...' : 'Add to warehouse'}
+        </Button>
       </div>
     </form>
   );

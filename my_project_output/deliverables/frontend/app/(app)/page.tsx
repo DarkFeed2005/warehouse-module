@@ -1,9 +1,11 @@
 'use client';
+import { useState } from 'react';
 import KPICard from '@/components/KPICard';
 import SectionHeader from '@/components/SectionHeader';
 import WarehouseCard from '@/components/WarehouseCard';
 import StatusBadge from '@/components/StatusBadge';
 import { Button } from '@/components/Modal';
+import DeliveryModal from '@/components/DeliveryModal';
 import { DataTable, TR, TD } from '@/components/DataTable';
 import { fmtKg, fmtLKR, fmtDate } from '@/lib/format';
 import { useDashboardKpis, useWarehouses, usePurchases, useApprovals } from '@/lib/hooks';
@@ -20,6 +22,7 @@ export default function Dashboard() {
   const { data: warehouses = [] } = useWarehouses();
   const { data: purchases = [] } = usePurchases();
   const { data: approvals = [] } = useApprovals();
+  const [deliveryFor, setDeliveryFor] = useState<any | null>(null);
 
   const pending = purchases.filter((p: any) => p.payment_status !== 'COMPLETED');
 
@@ -58,7 +61,7 @@ export default function Dashboard() {
                   <TD className="font-semibold">{fmtLKR(p.amount_lkr)}</TD>
                   <TD><StatusBadge status={p.payment_status}/></TD>
                   <TD className="text-xs text-forest-800/70">{p.warehouse_name}</TD>
-                  <TD><Button variant="outline">Assign delivery</Button></TD>
+                  <TD><Button variant="outline" onClick={() => setDeliveryFor(p)}>Assign delivery</Button></TD>
                 </TR>
               ))}
             </DataTable>
@@ -92,6 +95,16 @@ export default function Dashboard() {
           </ul>
         </div>
       </section>
+
+      {deliveryFor && (
+        <DeliveryModal
+          open={!!deliveryFor}
+          onClose={() => setDeliveryFor(null)}
+          warehouseId={deliveryFor.warehouse_id}
+          warehouseName={deliveryFor.warehouse_name}
+          defaultQty={Number(deliveryFor.quantity_kg)}
+        />
+      )}
     </div>
   );
 }

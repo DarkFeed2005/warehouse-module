@@ -4,9 +4,13 @@ from datetime import timedelta
 from pathlib import Path
 
 import sentry_sdk
+from dotenv import load_dotenv
 from sentry_sdk.integrations.django import DjangoIntegration
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env file so DJANGO_SECRET_KEY etc. work out of the box (dev convenience)
+load_dotenv(BASE_DIR / ".env")
 
 # ─── Mandatory Environment Secrets (no fallback in production) ───
 SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
@@ -115,15 +119,16 @@ USE_TZ = True
 # ─── Static Files (WhiteNoise) ───
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+STORAGES = {
+    "default": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ═══════════════════════════════════════════════════════════════
 # PRODUCTION SECURITY HARDENING
 # ═══════════════════════════════════════════════════════════════
-SECURE_BROWSER_XSS_FILTER = True
-SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
 SECURE_HSTS_SECONDS = 0 if DEBUG else 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
